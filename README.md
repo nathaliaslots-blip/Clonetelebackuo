@@ -36,12 +36,21 @@ um tópico com o título `{bandeira} {nome} - {id}`. O tópico `264` pode ser
 alterado com `EXTRA_TOPIC_ID`; ele não é criado pelo bot.
 O arquivo `topics.json` é criado automaticamente e não deve ser versionado.
 
+## Mensagens agendadas
+
+Quando `OTHER_GROUP` estiver configurada, o bot consulta até 100 mensagens
+agendadas desse grupo a cada 30 segundos. Para cada legenda reconhecida pelo
+mesmo parser usado nas mídias recebidas, ele extrai nome/ID/país e edita a
+mensagem com a legenda padronizada. Há um intervalo de 5 segundos entre
+edições. Mensagens sem legenda compatível são ignoradas.
+
 ## Railway
 
 Crie um serviço a partir deste repositório, configure os secrets
 `API_ID`, `API_HASH`, `STRING_SESSION`, `SOURCE_CHAT_ID` e `LOG_CHAT_ID` no
-Railway e faça o deploy. `TARGET_CHAT_ID`, `EXTRA_TOPIC_ID` e
-`QUEUE_DELAY_SECONDS` são opcionais.
+Railway e faça o deploy. Para ativar a edição de mensagens agendadas, configure
+também `OTHER_GROUP`. `TARGET_CHAT_ID`, `EXTRA_TOPIC_ID` e `QUEUE_DELAY_SECONDS`
+são opcionais.
 O processo de execução é `python main.py`. A `STRING_SESSION` é obrigatória no Railway:
 sem ela, o Telethon tenta pedir o telefone via terminal e ocorre
 `EOFError` porque o ambiente não é interativo.
