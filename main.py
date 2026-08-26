@@ -28,6 +28,16 @@ GENERAL_TOPIC_ID = 1
 LOG_CHAT_ID = int(os.getenv("LOG_CHAT_ID", "0"))
 TOPICS_FILE = Path(os.getenv("TOPICS_FILE", "topics.json"))
 QUEUE_DELAY_SECONDS = float(os.getenv("QUEUE_DELAY_SECONDS", "2"))
+OTHER_GROUP_VALUE = os.getenv("OTHER_GROUP", "").strip()
+if OTHER_GROUP_VALUE:
+    try:
+        OTHER_GROUP = int(OTHER_GROUP_VALUE)
+    except ValueError:
+        OTHER_GROUP = OTHER_GROUP_VALUE
+else:
+    OTHER_GROUP = None
+SCHEDULED_EDIT_DELAY_SECONDS = 5
+SCHEDULED_POLL_SECONDS = 30
 
 # Railway is non-interactive, so the client must use the provided session
 # instead of creating a local .session file and asking for a phone number.
@@ -35,6 +45,7 @@ client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 topic_cache = {}
 media_queue = asyncio.Queue()
 queue_worker_task = None
+scheduled_editor_task = None
 pending_albums = {}
 known_duplicates = []
 
@@ -405,6 +416,81 @@ async def forward_to_topic(messages, topic_id, caption, label):
     return False
 
 
+async def edit_scheduled_messages():
+    """Normalize captions of up to 100 scheduled messages in OTHER_GROUP."""
+    if not OTHER_GROUP:
+        return 0
+
+    scheduled_messages = await client.get_messages(
+        OTHER_GROUP,
+        limit=100,
+        scheduled=True,
+    )
+    if not scheduled_messages:
+        return 0
+    if not isinstance(scheduled_messages, list):
+        scheduled_messages = [scheduled_messages]
+
+    candidates = []
+    for message in scheduled_messages:
+        source_caption = getattr(message, "message", None) or getattr(message, "text", None)
+        parsed = parse_caption(source_caption)
+        if parsed:
+            candidates.append((message, parsed))
+
+    edited = 0
+    for index, (message, parsed) in enumerate(candidates):
+        name, user_id, country = parsed
+        new_caption = make_caption(name, user_id, country)
+        try:
+            await client.edit_message(
+                entity=OTHER_GROUP,
+                message=message.id,
+                text=new_caption,
+            )
+            edited += 1
+            log.info("Edited scheduled message %s in %s", message.id, OTHER_GROUP)
+            queue_log(
+                f"✏️ Mensagem agendada {message.id} editada em {OTHER_GROUP}: "
+                f"{name} ({user_id})"
+            )
+        except FloodWaitError as error:
+            log.warning(
+                "FloodWait while editing scheduled message %s: %s",
+                message.id,
+                error,
+            )
+            queue_log(
+                f"⚠️ FloodWait ao editar mensagem agendada {message.id}: {error}"
+            )
+        except Exception as error:
+            log.exception("Failed to edit scheduled message %s", message.id)
+            queue_log(
+                f"❌ Erro ao editar mensagem agendada {message.id}: {error}"
+            )
+
+        if index < len(candidates) - 1:
+            await asyncio.sleep(SCHEDULED_EDIT_DELAY_SECONDS)
+
+    return edited
+
+
+async def scheduled_editor_worker():
+    while True:
+        try:
+            edited = await edit_scheduled_messages()
+            if edited:
+                log.info("Edited %d scheduled message(s) in %s", edited, OTHER_GROUP)
+        except FloodWaitError as error:
+            log.warning("FloodWait while reading scheduled messages: %s", error)
+            queue_log(f"⚠️ FloodWait ao consultar mensagens agendadas: {error}")
+            await asyncio.sleep(error.seconds)
+        except Exception as error:
+            log.exception("Unexpected scheduled editor error")
+            queue_log(f"❌ Erro inesperado no editor de agendadas: {error}")
+        await asyncio.sleep(SCHEDULED_POLL_SECONDS)
+
+
 async def forward_media(item):
     messages = item["messages"]
     extra_topic_id = item["extra_topic_id"]
@@ -703,7 +789,7 @@ async def logs_command_handler(event):
 
 
 async def main():
-    global queue_worker_task
+    global queue_worker_task, scheduled_editor_task
     load_topics()
     await client.start()
     await sync_all_topics()
@@ -711,6 +797,12 @@ async def main():
         log.warning("LOG_CHAT_ID is not configured; Telegram command/log chat is disabled")
     if queue_worker_task is None or queue_worker_task.done():
         queue_worker_task = asyncio.create_task(queue_worker())
+    if OTHER_GROUP:
+        if scheduled_editor_task is None or scheduled_editor_task.done():
+            scheduled_editor_task = asyncio.create_task(scheduled_editor_worker())
+        log.info("Scheduled-message editor enabled for %s", OTHER_GROUP)
+    else:
+        log.warning("OTHER_GROUP is not configured; scheduled-message editor is disabled")
     log.info("Monitoring %s and forwarding to %s", SOURCE_CHAT_ID, TARGET_CHAT_ID)
     await client.run_until_disconnected()
 
