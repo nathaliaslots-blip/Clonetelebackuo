@@ -46,6 +46,7 @@ topic_cache = {}
 media_queue = asyncio.Queue()
 queue_worker_task = None
 scheduled_editor_task = None
+other_group_entity = None
 pending_albums = {}
 known_duplicates = []
 
@@ -416,13 +417,29 @@ async def forward_to_topic(messages, topic_id, caption, label):
     return False
 
 
+async def resolve_other_group():
+    """Resolve OTHER_GROUP and load dialogs when only a numeric ID is available."""
+    global other_group_entity
+    if other_group_entity is not None:
+        return other_group_entity
+
+    try:
+        other_group_entity = await client.get_input_entity(OTHER_GROUP)
+    except ValueError:
+        log.info("Loading dialogs to resolve OTHER_GROUP %s", OTHER_GROUP)
+        await client.get_dialogs()
+        other_group_entity = await client.get_input_entity(OTHER_GROUP)
+    return other_group_entity
+
+
 async def edit_scheduled_messages():
     """Normalize captions of up to 100 scheduled messages in OTHER_GROUP."""
     if not OTHER_GROUP:
         return 0
 
+    other_group_entity = await resolve_other_group()
     scheduled_messages = await client.get_messages(
-        OTHER_GROUP,
+        other_group_entity,
         limit=100,
         scheduled=True,
     )
@@ -444,7 +461,7 @@ async def edit_scheduled_messages():
         new_caption = make_caption(name, user_id, country)
         try:
             await client.edit_message(
-                entity=OTHER_GROUP,
+                entity=other_group_entity,
                 message=message.id,
                 text=new_caption,
             )
