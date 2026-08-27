@@ -459,6 +459,31 @@ async def edit_scheduled_messages():
     edited = 0
     for index, (message, parsed) in enumerate(candidates):
         name, user_id, country = parsed
+        try:
+            topic_id = await get_or_create_topic(name, user_id, country)
+            log.info(
+                "Scheduled message %s mapped to topic %s",
+                message.id,
+                topic_id,
+            )
+        except FloodWaitError as error:
+            log.warning(
+                "FloodWait while creating topic for scheduled message %s: %s",
+                message.id,
+                error,
+            )
+            queue_log(
+                f"⚠️ FloodWait ao criar tópico da mensagem agendada {message.id}: {error}"
+            )
+        except Exception as error:
+            log.exception(
+                "Failed to create topic for scheduled message %s",
+                message.id,
+            )
+            queue_log(
+                f"❌ Erro ao criar tópico da mensagem agendada {message.id}: {error}"
+            )
+
         new_caption = make_caption(name, user_id, country)
         current_caption = getattr(message, "message", None) or getattr(message, "text", None)
         if current_caption == new_caption:
