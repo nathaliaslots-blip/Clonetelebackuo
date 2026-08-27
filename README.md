@@ -43,7 +43,7 @@ agendadas desse grupo a cada 30 segundos. Para cada legenda reconhecida pelo
 mesmo parser usado nas mídias recebidas, ele extrai nome/ID/país e edita a
 mensagem com a legenda padronizada. Há um intervalo de 5 segundos entre
 edições. Mensagens sem legenda compatível são ignoradas. O bot também garante
-a criação do tópico correspondente no grupo de destino, sem encaminhar a mídia.
+a criação do tópico correspondente no próprio `OTHER_GROUP`, sem encaminhar a mídia.
 
 ## Railway
 
