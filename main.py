@@ -134,6 +134,7 @@ def parse_caption(caption):
             r"👤\s*(.+?)\s*\((\d+)\)",
             True,
         ),
+        ("👤 Name:", r"(?m)^\s*👤\s*Name\s*:\s*(.+)", False),
         ("🙍‍♀️", r"(?m)^\s*🙍‍♀️\s*:?\s*(.+)", False),
         ("👩🏻", r"(?m)^\s*👩🏻\s*:?\s*(.+)", False),
         ("👤", r"(?m)^\s*👤\s*(.+)", False),
@@ -438,15 +439,15 @@ async def edit_scheduled_messages():
         return 0
 
     other_group_entity = await resolve_other_group()
-    scheduled_messages = await client.get_messages(
-        other_group_entity,
-        limit=100,
-        scheduled=True,
+    scheduled_response = await client(
+        functions.messages.GetScheduledHistoryRequest(
+            peer=other_group_entity,
+            hash=0,
+        )
     )
+    scheduled_messages = list(getattr(scheduled_response, "messages", []))
     if not scheduled_messages:
         return 0
-    if not isinstance(scheduled_messages, list):
-        scheduled_messages = [scheduled_messages]
 
     candidates = []
     for message in scheduled_messages:
@@ -459,6 +460,10 @@ async def edit_scheduled_messages():
     for index, (message, parsed) in enumerate(candidates):
         name, user_id, country = parsed
         new_caption = make_caption(name, user_id, country)
+        current_caption = getattr(message, "message", None) or getattr(message, "text", None)
+        if current_caption == new_caption:
+            log.debug("Scheduled message %s already has the standard caption", message.id)
+            continue
         try:
             await client.edit_message(
                 entity=other_group_entity,
