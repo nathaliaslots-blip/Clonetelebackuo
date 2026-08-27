@@ -43,6 +43,7 @@ SCHEDULED_POLL_SECONDS = 30
 # instead of creating a local .session file and asking for a phone number.
 client = TelegramClient(StringSession(STRING_SESSION), API_ID, API_HASH)
 topic_cache = {}
+other_group_topic_cache = {}
 media_queue = asyncio.Queue()
 queue_worker_task = None
 scheduled_editor_task = None
@@ -216,15 +217,16 @@ def make_caption(name, user_id, country):
     )
 
 
-async def find_topic(user_id):
-    cached = topic_cache.get(str(user_id))
+async def find_topic(user_id, chat_id=TARGET_CHAT_ID, cache=None):
+    cache = topic_cache if cache is None else cache
+    cached = cache.get(str(user_id))
     if cached:
         return cached
 
     # The local JSON is fast; this API fallback also recovers after cache loss.
     response = await client(
         functions.messages.GetForumTopicsRequest(
-            peer=TARGET_CHAT_ID,
+            peer=chat_id,
             q="",
             offset_date=0,
             offset_id=0,
@@ -235,8 +237,9 @@ async def find_topic(user_id):
     for topic in getattr(response, "topics", []):
         title = getattr(topic, "title", "") or ""
         if re.search(rf"(?:^|-\s*){re.escape(str(user_id))}\s*$", title):
-            topic_cache[str(user_id)] = int(topic.id)
-            save_topics()
+            cache[str(user_id)] = int(topic.id)
+            if cache is topic_cache:
+                save_topics()
             return int(topic.id)
     return None
 
@@ -345,17 +348,24 @@ async def sync_all_topics():
     return total_topics, list(known_duplicates)
 
 
-async def get_or_create_topic(name, user_id, country):
-    topic_id = topic_cache.get(str(user_id))
+async def get_or_create_topic(
+    name,
+    user_id,
+    country,
+    chat_id=TARGET_CHAT_ID,
+    cache=None,
+):
+    cache = topic_cache if cache is None else cache
+    topic_id = cache.get(str(user_id))
     if topic_id:
         return topic_id
-    topic_id = await find_topic(user_id)
+    topic_id = await find_topic(user_id, chat_id=chat_id, cache=cache)
     if topic_id:
         return topic_id
 
     result = await client(
         functions.messages.CreateForumTopicRequest(
-            peer=TARGET_CHAT_ID,
+            peer=chat_id,
             title=f"{country} {name} - {user_id}",
         )
     )
@@ -371,8 +381,9 @@ async def get_or_create_topic(name, user_id, country):
     if topic_id is None:
         raise RuntimeError("Telegram did not return the new forum topic id")
 
-    topic_cache[str(user_id)] = topic_id
-    save_topics()
+    cache[str(user_id)] = topic_id
+    if cache is topic_cache:
+        save_topics()
     return topic_id
 
 
@@ -460,7 +471,13 @@ async def edit_scheduled_messages():
     for index, (message, parsed) in enumerate(candidates):
         name, user_id, country = parsed
         try:
-            topic_id = await get_or_create_topic(name, user_id, country)
+            topic_id = await get_or_create_topic(
+                name,
+                user_id,
+                country,
+                chat_id=OTHER_GROUP,
+                cache=other_group_topic_cache,
+            )
             log.info(
                 "Scheduled message %s mapped to topic %s",
                 message.id,
