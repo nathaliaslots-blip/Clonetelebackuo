@@ -469,6 +469,7 @@ async def edit_scheduled_messages():
                 entity=other_group_entity,
                 message=message.id,
                 text=new_caption,
+                schedule=message.date,
             )
             edited += 1
             log.info("Edited scheduled message %s in %s", message.id, OTHER_GROUP)
